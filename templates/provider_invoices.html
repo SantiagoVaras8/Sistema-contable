@@ -1,0 +1,148 @@
+{% extends 'base.html' %}
+
+{% block title %}Facturas - {{ provider['name'] }}{% endblock %}
+
+{% block content %}
+<div class="section-header">
+  <div>
+    <h1>Facturas de {{ provider['name'] }}</h1>
+    <p style="color: var(--muted); margin-top: 4px;">Saldo actual adeudado: <strong>$ {{ '%.2f' % provider['balance']
+        }}</strong></p>
+  </div>
+  <div class="header-actions">
+    <a class="btn-secondary" href="{{ url_for('invoices_index') }}">← Todas las facturas</a>
+    <a class="btn-secondary" href="{{ url_for('providers_page') }}">Ir a proveedores</a>
+  </div>
+</div>
+
+<section class="panel">
+  <h2>Subir nueva factura</h2>
+  <form method="post" enctype="multipart/form-data" class="provider-form">
+    <div class="form-grid">
+      <div>
+        <label for="invoice_date">Fecha de la factura</label>
+        <input type="date" id="invoice_date" name="invoice_date" value="{{ today }}" required />
+      </div>
+
+      <div>
+        <label for="invoice_file">Archivo (Foto o PDF)</label>
+        <input type="file" id="invoice_file" name="invoice_file" accept=".pdf,.png,.jpg,.jpeg,.webp" required />
+      </div>
+    </div>
+
+    <div>
+      <label for="notes">Observaciones (opcional)</label>
+      <input type="text" id="notes" name="notes" placeholder="Ej. Factura de compra de insumos, pagadera a 30 días" />
+    </div>
+
+    <button type="submit" style="max-width: 250px; margin-top: 8px;">Subir factura</button>
+  </form>
+</section>
+
+<section class="panel section-block">
+  <div class="section-header">
+    <h2>Historial de facturas</h2>
+    <div>
+      <span style="font-weight: 600; color: var(--muted);">Facturas en lista:</span>
+      <span class="value" style="font-weight: bold; color: var(--primary); font-size: 1.2rem;">{{ total_invoices_count }}</span>
+    </div>
+  </div>
+
+  <form method="get" class="filters income-filters">
+    <label class="field-filter">
+      <span>Tipo</span>
+      <select name="filter_type" id="filter_type">
+        <option value="month" {% if filter_type=='month' %}selected{% endif %}>Mes</option>
+        <option value="day" {% if filter_type=='day' %}selected{% endif %}>Día</option>
+      </select>
+    </label>
+
+    <label class="field-filter field-filter-value">
+      <span>Seleccionar</span>
+      <input type="{{ 'month' if filter_type == 'month' else 'date' }}" id="filter_value" name="filter_value"
+        value="{{ selected_month if selected_month else (selected_day if selected_day else '') }}" />
+    </label>
+
+    <div class="filter-actions">
+      <button type="submit">Aplicar filtros</button>
+      {% if selected_month or selected_day %}
+      <a class="btn-secondary" href="{{ url_for('provider_invoices', provider_id=provider['id']) }}">Limpiar</a>
+      {% endif %}
+    </div>
+  </form>
+
+  <script>
+    function toggleInvoiceFilter() {
+      const type = document.getElementById('filter_type');
+      const valueInput = document.getElementById('filter_value');
+
+      if (!type || !valueInput) return;
+
+      const isMonth = type.value === 'month';
+      valueInput.type = isMonth ? 'month' : 'date';
+      valueInput.value = '';
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      const type = document.getElementById('filter_type');
+      const valueInput = document.getElementById('filter_value');
+
+      if (type && valueInput) {
+        type.value = '{{ filter_type if filter_type else "month" }}';
+        toggleInvoiceFilter();
+        valueInput.value = '{{ selected_month if selected_month else (selected_day if selected_day else '') }}';
+        valueInput.type = type.value === 'month' ? 'month' : 'date';
+        type.addEventListener('change', function () {
+          toggleInvoiceFilter();
+        });
+      }
+    });
+  </script>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Documento</th>
+          <th>Observaciones</th>
+          <th>Acción</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if invoices %}
+        {% for inv in invoices %}
+        <tr>
+          <td>{{ inv['invoice_date'] }}</td>
+          <td>
+            <a href="{{ url_for('view_invoice_file', invoice_id=inv['id']) }}" target="_blank"
+              style="color: var(--primary); font-weight: 600; text-decoration: none;">
+              📄 {{ inv['original_filename'] }}
+            </a>
+          </td>
+          <td style="color: var(--muted); font-size: 0.9rem;">{{ inv['notes'] or '-' }}</td>
+          <td>
+            <div class="provider-actions" style="flex-direction: row; gap: 8px;">
+              <a class="btn-secondary" style="padding: 8px 12px; font-size: 0.85rem;"
+                href="{{ url_for('view_invoice_file', invoice_id=inv['id']) }}" target="_blank">
+                👁️ Visualizar
+              </a>
+              <form method="post" action="{{ url_for('delete_invoice', invoice_id=inv['id']) }}"
+                onsubmit="return confirm('¿Deseas eliminar esta factura y su archivo?');">
+                <button type="submit" class="btn-delete"
+                  style="padding: 8px 12px; font-size: 0.85rem;">Eliminar</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr>
+          <td colspan="4">No hay facturas registradas para este proveedor con los filtros seleccionados.</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

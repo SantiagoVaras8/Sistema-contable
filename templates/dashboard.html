@@ -1,0 +1,169 @@
+{% extends 'base.html' %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+  <div class="section-header">
+    <h1>Bienvenido, {{ username }}</h1>
+    <div class="header-actions">
+      <a class="btn-secondary" href="{{ url_for('add_income') }}">+ Nuevo ingreso</a>
+      <a class="btn-secondary" href="{{ url_for('providers_page') }}">+ Nuevo proveedor</a>
+    </div>
+  </div>
+
+  <div class="summary-grid">
+    <div class="summary-card">
+      <h3>Ingreso bruto</h3>
+      <div class="value bruto">$ {{ '%.2f' % total_bruto }}</div>
+    </div>
+    <div class="summary-card">
+      <h3>Impuesto</h3>
+      <div class="value impuesto">$ {{ '%.2f' % total_impuestos }}</div>
+    </div>
+    <div class="summary-card">
+      <h3>Ingreso neto</h3>
+      <div class="value neto">$ {{ '%.2f' % total_neto }}</div>
+    </div>
+  </div>
+
+  <section class="panel section-block">
+    <div class="section-header">
+      <h2>Sección de ingresos</h2>
+    </div>
+
+    <form method="get" class="filters income-filters">
+      <label class="field-filter">
+        <span>Tipo</span>
+        <select name="filter_type" id="filter_type">
+          <option value="month" {% if filter_type == 'month' %}selected{% endif %}>Mes</option>
+          <option value="day" {% if filter_type == 'day' %}selected{% endif %}>Día</option>
+        </select>
+      </label>
+
+      <label class="field-filter field-filter-value">
+        <span>Seleccionar</span>
+        <input
+          type="{{ 'month' if filter_type == 'month' else 'date' }}"
+          id="filter_value"
+          name="filter_value"
+          value="{{ selected_month if selected_month else (selected_day if selected_day else '') }}"
+        />
+      </label>
+
+      <div class="filter-actions">
+        <button type="submit">Aplicar filtros</button>
+        {% if selected_month or selected_day %}
+          <a class="btn-secondary" href="{{ url_for('dashboard') }}">Limpiar</a>
+        {% endif %}
+      </div>
+    </form>
+
+    <script>
+      function toggleIncomeFilter() {
+        const type = document.getElementById('filter_type');
+        const valueInput = document.getElementById('filter_value');
+
+        if (!type || !valueInput) return;
+
+        const isMonth = type.value === 'month';
+        valueInput.type = isMonth ? 'month' : 'date';
+        valueInput.value = '';
+      }
+
+      document.addEventListener('DOMContentLoaded', function () {
+        const type = document.getElementById('filter_type');
+        const valueInput = document.getElementById('filter_value');
+
+        if (type && valueInput) {
+          type.value = '{{ filter_type if filter_type else "month" }}';
+          toggleIncomeFilter();
+          valueInput.value = '{{ selected_month if selected_month else (selected_day if selected_day else '') }}';
+          valueInput.type = type.value === 'month' ? 'month' : 'date';
+          type.addEventListener('change', function () {
+            toggleIncomeFilter();
+          });
+        }
+      });
+    </script>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Ingreso bruto</th>
+            <th>Impuesto</th>
+            <th>Ingreso neto</th>
+            <th>Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if incomes %}
+            {% for income in incomes %}
+              <tr>
+                <td>{{ income['income_date'] }}</td>
+                <td>$ {{ '%.2f' % income['amount_bruto'] }}</td>
+                <td>$ {{ '%.2f' % income['tax_amount'] }}</td>
+                <td>$ {{ '%.2f' % income['amount_neto'] }}</td>
+                <td>
+                  <form method="post" action="{{ url_for('delete_income', income_id=income['id']) }}" onsubmit="return confirm('¿Deseas eliminar este ingreso?');">
+                    <button type="submit" class="btn-delete">Eliminar</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="5">No hay ingresos registrados con estos filtros.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel section-block">
+    <div class="section-header">
+      <h2>Sección de proveedores</h2>
+      <a class="btn-secondary" href="{{ url_for('providers_page') }}">Gestionar proveedores</a>
+    </div>
+
+    <div class="summary-grid">
+      <div class="summary-card">
+        <h3>Saldo actual adeudado</h3>
+        <div class="value bruto">$ {{ '%.2f' % total_balance_proveedores }}</div>
+      </div>
+      <div class="summary-card">
+        <h3>Último pago registrado</h3>
+        <div class="value neto">$ {{ '%.2f' % total_ultimo_pago_proveedores }}</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Proveedor</th>
+            <th>Saldo actual</th>
+            <th>Último pago</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if providers %}
+            {% for provider in providers %}
+              <tr>
+                <td>{{ provider['name'] }}</td>
+                <td>$ {{ '%.2f' % provider['balance'] }}</td>
+                <td>$ {{ '%.2f' % provider['last_payment_amount'] }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="3">No hay proveedores registrados.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

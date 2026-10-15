@@ -1,0 +1,169 @@
+{% extends 'base.html' %}
+
+{% block title %}Proveedores{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <h1>Saldo y Proveedores</h1>
+
+    <form method="post" class="provider-form">
+      <div class="form-grid">
+        <div>
+          <label for="name">Nombre</label>
+          <input type="text" id="name" name="name" placeholder="Ej. Proveedor S.A." required />
+        </div>
+
+        <div>
+          <label for="balance">Saldo del proveedor</label>
+          <input type="number" id="balance" name="balance" step="0.01" min="0.01" required />
+        </div>
+
+        <div>
+          <label for="balance_date">Fecha del saldo</label>
+          <input type="date" id="balance_date" name="balance_date" value="{{ today }}" required />
+        </div>
+      </div>
+
+      <button type="submit">Guardar saldo de proveedor</button>
+    </form>
+  </section>
+
+  <section class="panel section-block">
+    <h2>Listado de proveedores</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Proveedor</th>
+            <th>Saldo actual</th>
+            <th>Último pago</th>
+            <th>Última fecha</th>
+            <th>Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if providers %}
+            {% for provider in providers %}
+              <tr>
+                <td>{{ provider['name'] }}</td>
+                <td>$ {{ '%.2f' % provider['balance'] }}</td>
+                <td>$ {{ '%.2f' % provider['last_payment_amount'] }}</td>
+                <td>{{ provider['last_balance_date'] or 'Sin fecha' }}</td>
+                <td>
+                  <div class="provider-actions">
+                    <form id="provider-payment-{{ provider['id'] }}" class="inline-payment" method="post" action="{{ url_for('add_provider_payment', provider_id=provider['id']) }}">
+                      <input type="number" step="0.01" min="0.01" name="amount_paid" placeholder="Monto a pagar" required />
+                      <input type="date" name="payment_date" value="{{ today }}" />
+                    </form>
+                    <div class="provider-action-buttons">
+                      <button type="submit" form="provider-payment-{{ provider['id'] }}">Registrar pago</button>
+                      <form class="provider-delete-form" method="post" action="{{ url_for('delete_provider', provider_id=provider['id']) }}" onsubmit="return confirm('¿Deseas eliminar este proveedor y todo su historial?');">
+                        <button type="submit" class="btn-delete">Eliminar</button>
+                      </form>
+                      <a class="btn-secondary" href="{{ url_for('provider_invoices', provider_id=provider['id']) }}">📁 Facturas</a>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="5">No hay proveedores registrados todavía.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel section-block">
+    <div class="section-header">
+      <h2>Historial de movimientos</h2>
+    </div>
+
+    <form method="get" class="filters income-filters">
+      <label class="field-filter">
+        <span>Tipo</span>
+        <select name="filter_type" id="filter_type">
+          <option value="month" {% if filter_type == 'month' %}selected{% endif %}>Mes</option>
+          <option value="day" {% if filter_type == 'day' %}selected{% endif %}>Día</option>
+        </select>
+      </label>
+
+      <label class="field-filter field-filter-value">
+        <span>Seleccionar</span>
+        <input
+          type="{{ 'month' if filter_type == 'month' else 'date' }}"
+          id="filter_value"
+          name="filter_value"
+          value="{{ selected_month if selected_month else (selected_day if selected_day else '') }}"
+        />
+      </label>
+
+      <div class="filter-actions">
+        <button type="submit">Aplicar filtros</button>
+        {% if selected_month or selected_day %}
+          <a class="btn-secondary" href="{{ url_for('providers_page') }}">Limpiar</a>
+        {% endif %}
+      </div>
+    </form>
+
+    <script>
+      function toggleProviderHistoryFilter() {
+        const type = document.getElementById('filter_type');
+        const valueInput = document.getElementById('filter_value');
+
+        if (!type || !valueInput) return;
+
+        const isMonth = type.value === 'month';
+        valueInput.type = isMonth ? 'month' : 'date';
+        valueInput.value = '';
+      }
+
+      document.addEventListener('DOMContentLoaded', function () {
+        const type = document.getElementById('filter_type');
+        const valueInput = document.getElementById('filter_value');
+
+        if (type && valueInput) {
+          type.value = '{{ filter_type if filter_type else "month" }}';
+          toggleProviderHistoryFilter();
+          valueInput.value = '{{ selected_month if selected_month else (selected_day if selected_day else '') }}';
+          valueInput.type = type.value === 'month' ? 'month' : 'date';
+          type.addEventListener('change', function () {
+            toggleProviderHistoryFilter();
+          });
+        }
+      });
+    </script>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Proveedor</th>
+            <th>Tipo</th>
+            <th>Monto</th>
+            <th>Fecha</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if history %}
+            {% for item in history %}
+              <tr>
+                <td>{{ item['name'] }}</td>
+                <td>{{ 'Saldo' if item['movement_type'] == 'balance' else 'Pago' }}</td>
+                <td>$ {{ '%.2f' % item['amount'] }}</td>
+                <td>{{ item['movement_date'] }}</td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="4">No hay movimientos registrados.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

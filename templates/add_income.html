@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+
+{% block title %}Nuevo ingreso{% endblock %}
+
+{% block content %}
+  <section class="panel">
+    <h1>Registrar ingreso</h1>
+
+    <form method="post" class="income-form">
+      <div class="form-grid">
+        <div>
+          <label for="amount_bruto">Ingreso bruto</label>
+          <input type="number" id="amount_bruto" name="amount_bruto" step="0.01" min="0.01" required />
+        </div>
+
+        <div>
+          <label for="tax_rate">Impuesto (%)</label>
+          <input type="number" id="tax_rate" name="tax_rate" step="0.01" min="0" max="100" value="0" />
+        </div>
+
+        <div>
+          <label for="income_date">Fecha</label>
+          <input type="date" id="income_date" name="income_date" value="{{ today }}" />
+        </div>
+      </div>
+
+      <button type="submit">Guardar ingreso</button>
+    </form>
+  </section>
+{% endblock %}

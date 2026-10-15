@@ -1,0 +1,87 @@
+{% extends 'base.html' %}
+
+{% block title %}Facturas de Proveedores{% endblock %}
+
+{% block content %}
+  <div class="section-header">
+    <h1>Facturas de proveedores</h1>
+    <a class="btn-secondary" href="{{ url_for('providers_page') }}">Volver a proveedores</a>
+  </div>
+
+  <section class="panel section-block">
+    <h2>Proveedores y sus carpetas de facturas</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Proveedor</th>
+            <th>Saldo actual</th>
+            <th>Facturas cargadas</th>
+            <th>Última fecha factura</th>
+            <th>Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if providers %}
+            {% for provider in providers %}
+              <tr>
+                <td><strong>{{ provider['name'] }}</strong></td>
+                <td>$ {{ '%.2f' % provider['balance'] }}</td>
+                <td>{{ provider['invoices_count'] }} factura(s)</td>
+                <td>{{ provider['last_invoice_date'] or 'Sin facturas aún' }}</td>
+                <td>
+                  <a class="btn-secondary" href="{{ url_for('provider_invoices', provider_id=provider['id']) }}">
+                    📂 Ver y subir facturas
+                  </a>
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="5">No hay proveedores registrados aún. Registra uno primero en la sección de proveedores.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% if recent_invoices %}
+    <section class="panel section-block">
+      <h2>Últimas facturas subidas</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Proveedor</th>
+              <th>Fecha</th>
+              <th>Archivo</th>
+              <th>Observaciones</th>
+              <th>Acción</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for inv in recent_invoices %}
+              <tr>
+                <td><strong>{{ inv['provider_name'] }}</strong></td>
+                <td>{{ inv['invoice_date'] }}</td>
+                <td>{{ inv['original_filename'] }}</td>
+                <td style="color: var(--muted); font-size: 0.9rem;">{{ inv['notes'] or '-' }}</td>
+                <td>
+                  <div class="provider-actions" style="flex-direction: row; gap: 8px;">
+                    <a class="btn-secondary" style="padding: 8px 12px; font-size: 0.85rem;" href="{{ url_for('view_invoice_file', invoice_id=inv['id']) }}" target="_blank">
+                      👁️ Ver documento
+                    </a>
+                    <a class="btn-secondary" style="padding: 8px 12px; font-size: 0.85rem;" href="{{ url_for('provider_invoices', provider_id=inv['provider_id']) }}">
+                      Ir al proveedor
+                    </a>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+{% endblock %}

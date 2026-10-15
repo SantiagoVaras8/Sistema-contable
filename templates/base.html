@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{% block title %}Sistema Contable{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <nav class="navbar">
+      <div class="container nav-inner">
+        <a class="brand" href="{{ url_for('dashboard') if session.get('user_id') else url_for('login') }}">Sistema Contable</a>
+        <div class="nav-links">
+          {% if session.get('user_id') %}
+            <a href="{{ url_for('dashboard') }}">Inicio</a>
+            <a href="{{ url_for('add_income') }}">Ingresos</a>
+            <a href="{{ url_for('providers_page') }}">Proveedores</a>
+            <a href="{{ url_for('invoices_index') }}">Facturas</a>
+            <a href="{{ url_for('logout') }}">Cerrar sesión</a>
+          {% else %}
+            <a href="{{ url_for('login') }}">Iniciar sesión</a>
+            <a href="{{ url_for('register') }}">Registro</a>
+          {% endif %}
+        </div>
+      </div>
+    </nav>
+
+    <main class="container main-content">
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="flash-list">
+            {% for message in messages %}
+              <div class="flash-message">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>
