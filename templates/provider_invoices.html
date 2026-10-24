@@ -128,7 +128,9 @@
                 👁️ Visualizar
               </a>
               <form method="post" action="{{ url_for('delete_invoice', invoice_id=inv['id']) }}"
-                onsubmit="return confirm('¿Deseas eliminar esta factura y su archivo?');">
+                data-confirm-title="Eliminar factura"
+                data-confirm-message="Se eliminará esta factura y su archivo asociado. Esta acción no se puede deshacer."
+                data-confirm-action="Eliminar factura">
                 <button type="submit" class="btn-delete"
                   style="padding: 8px 12px; font-size: 0.85rem;">Eliminar</button>
               </form>

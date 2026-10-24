@@ -1,21 +1,28 @@
 {% extends 'base.html' %}
 
-{% block title %}Nuevo ingreso{% endblock %}
+{% block title %}Ingresos{% endblock %}
 
 {% block content %}
-  <section class="panel">
-    <h1>Registrar ingreso</h1>
+  <header class="page-heading">
+    <div>
+      <p class="eyebrow">Ventas</p>
+      <h1>Registrar venta</h1>
+      <p class="page-description">Registra nuevas ventas y consulta su historial.</p>
+    </div>
+  </header>
 
+  <section class="panel">
+    <h2>Nuevo registro</h2>
     <form method="post" class="income-form">
       <div class="form-grid">
         <div>
-          <label for="amount_bruto">Ingreso bruto</label>
+          <label for="amount_bruto">Venta en bruto</label>
           <input type="number" id="amount_bruto" name="amount_bruto" step="0.01" min="0.01" required />
         </div>
 
         <div>
-          <label for="tax_rate">Impuesto (%)</label>
-          <input type="number" id="tax_rate" name="tax_rate" step="0.01" min="0" max="100" value="0" />
+          <label for="tax_rate">Margen de ganancia (%)</label>
+          <input type="number" id="tax_rate" name="tax_rate" step="0.01" min="0" value="0" />
         </div>
 
         <div>
@@ -24,7 +31,109 @@
         </div>
       </div>
 
-      <button type="submit">Guardar ingreso</button>
+      <button type="submit">Guardar venta</button>
     </form>
+  </section>
+
+  <section class="panel section-block">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Registros</p>
+        <h2>Historial de ingresos</h2>
+      </div>
+    </div>
+
+    <form method="get" class="filters income-filters">
+      <label class="field-filter">
+        <span>Tipo</span>
+        <select name="filter_type" id="filter_type">
+          <option value="month" {% if filter_type == 'month' %}selected{% endif %}>Mes</option>
+          <option value="day" {% if filter_type == 'day' %}selected{% endif %}>Día</option>
+        </select>
+      </label>
+
+      <label class="field-filter field-filter-value">
+        <span>Seleccionar</span>
+        <input
+          type="{{ 'month' if filter_type == 'month' else 'date' }}"
+          id="filter_value"
+          name="filter_value"
+          value="{{ selected_month if selected_month else (selected_day if selected_day else '') }}"
+        />
+      </label>
+
+      <div class="filter-actions">
+        <button type="submit">Aplicar filtros</button>
+        {% if selected_month or selected_day %}
+          <a class="btn-secondary" href="{{ url_for('add_income') }}">Limpiar</a>
+        {% endif %}
+      </div>
+    </form>
+
+    <script>
+      function toggleIncomeFilter() {
+        const type = document.getElementById('filter_type');
+        const valueInput = document.getElementById('filter_value');
+
+        if (!type || !valueInput) return;
+
+        const isMonth = type.value === 'month';
+        valueInput.type = isMonth ? 'month' : 'date';
+        valueInput.value = '';
+      }
+
+      document.addEventListener('DOMContentLoaded', function () {
+        const type = document.getElementById('filter_type');
+        const valueInput = document.getElementById('filter_value');
+
+        if (type && valueInput) {
+          type.value = '{{ filter_type if filter_type else "month" }}';
+          toggleIncomeFilter();
+          valueInput.value = '{{ selected_month if selected_month else (selected_day if selected_day else '') }}';
+          valueInput.type = type.value === 'month' ? 'month' : 'date';
+          type.addEventListener('change', function () {
+            toggleIncomeFilter();
+          });
+        }
+      });
+    </script>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            <th>Venta en bruto</th>
+            <th>Costo base</th>
+            <th>Ganancia neta</th>
+            <th>Acción</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if incomes %}
+            {% for income in incomes %}
+              <tr>
+                <td>{{ income['income_date'] }}</td>
+                <td>$ {{ '%.2f' % income['amount_bruto'] }}</td>
+                <td>$ {{ '%.2f' % income['tax_amount'] }}</td>
+                <td>$ {{ '%.2f' % income['amount_neto'] }}</td>
+                <td>
+                  <form method="post" action="{{ url_for('delete_income', income_id=income['id'], filter_type=filter_type, filter_value=selected_month if filter_type == 'month' else selected_day) }}"
+                    data-confirm-title="Eliminar ingreso"
+                    data-confirm-message="Se eliminará este ingreso del historial. Esta acción no se puede deshacer."
+                    data-confirm-action="Eliminar ingreso">
+                    <button type="submit" class="btn-delete">Eliminar</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          {% else %}
+            <tr>
+              <td colspan="5">No hay ingresos registrados con estos filtros.</td>
+            </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
   </section>
 {% endblock %}

@@ -9,14 +9,17 @@
   <body>
     <nav class="navbar">
       <div class="container nav-inner">
-        <a class="brand" href="{{ url_for('dashboard') if session.get('user_id') else url_for('login') }}">Sistema Contable</a>
+        <a class="brand" href="{{ url_for('dashboard') if session.get('user_id') else url_for('login') }}">
+          <span class="brand-mark" aria-hidden="true">SC</span>
+          <span>Sistema Contable</span>
+        </a>
         <div class="nav-links">
           {% if session.get('user_id') %}
-            <a href="{{ url_for('dashboard') }}">Inicio</a>
-            <a href="{{ url_for('add_income') }}">Ingresos</a>
-            <a href="{{ url_for('providers_page') }}">Proveedores</a>
-            <a href="{{ url_for('invoices_index') }}">Facturas</a>
-            <a href="{{ url_for('logout') }}">Cerrar sesión</a>
+            <a class="{% if request.endpoint == 'dashboard' %}active{% endif %}" href="{{ url_for('dashboard') }}">Inicio</a>
+            <a class="{% if request.endpoint == 'add_income' %}active{% endif %}" href="{{ url_for('add_income') }}">Ingresos</a>
+            <a class="{% if request.endpoint == 'providers_page' %}active{% endif %}" href="{{ url_for('providers_page') }}">Proveedores</a>
+            <a class="{% if request.endpoint in ['invoices_index', 'provider_invoices', 'view_invoice_file'] %}active{% endif %}" href="{{ url_for('invoices_index') }}">Facturas</a>
+            <a class="nav-logout" href="{{ url_for('logout') }}">Cerrar sesión</a>
           {% else %}
             <a href="{{ url_for('login') }}">Iniciar sesión</a>
             <a href="{{ url_for('register') }}">Registro</a>
@@ -26,11 +29,14 @@
     </nav>
 
     <main class="container main-content">
-      {% with messages = get_flashed_messages() %}
+      {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
           <div class="flash-list">
-            {% for message in messages %}
-              <div class="flash-message">{{ message }}</div>
+            {% for category, message in messages %}
+              <div class="flash-message flash-{{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">
+                <span class="flash-indicator" aria-hidden="true">{{ '!' if category == 'error' else ('✓' if category == 'success' else 'i') }}</span>
+                <span>{{ message }}</span>
+              </div>
             {% endfor %}
           </div>
         {% endif %}
@@ -38,5 +44,57 @@
 
       {% block content %}{% endblock %}
     </main>
+
+    <dialog class="confirm-dialog" id="confirm-dialog" aria-labelledby="confirm-dialog-title">
+      <div class="confirm-dialog-icon" aria-hidden="true">!</div>
+      <h2 id="confirm-dialog-title">Confirmar eliminación</h2>
+      <p class="confirm-dialog-message" id="confirm-dialog-message"></p>
+      <div class="confirm-dialog-actions">
+        <button class="btn-secondary" id="confirm-dialog-cancel" type="button">Cancelar</button>
+        <button class="btn-danger" id="confirm-dialog-accept" type="button">Eliminar</button>
+      </div>
+    </dialog>
+
+    <script>
+      (function () {
+        const dialog = document.getElementById('confirm-dialog');
+        const title = document.getElementById('confirm-dialog-title');
+        const message = document.getElementById('confirm-dialog-message');
+        const cancel = document.getElementById('confirm-dialog-cancel');
+        const accept = document.getElementById('confirm-dialog-accept');
+        let pendingForm = null;
+
+        document.addEventListener('submit', function (event) {
+          const form = event.target;
+          if (!(form instanceof HTMLFormElement) || !form.dataset.confirmMessage) return;
+          if (form.dataset.confirmed === 'true') {
+            delete form.dataset.confirmed;
+            return;
+          }
+
+          event.preventDefault();
+          pendingForm = form;
+          title.textContent = form.dataset.confirmTitle || 'Confirmar eliminación';
+          message.textContent = form.dataset.confirmMessage;
+          accept.textContent = form.dataset.confirmAction || 'Eliminar';
+          dialog.showModal();
+        });
+
+        cancel.addEventListener('click', function () {
+          pendingForm = null;
+          dialog.close();
+        });
+
+        accept.addEventListener('click', function () {
+          const form = pendingForm;
+          pendingForm = null;
+          dialog.close();
+          if (form) {
+            form.dataset.confirmed = 'true';
+            form.requestSubmit();
+          }
+        });
+      })();
+    </script>
   </body>
 </html>

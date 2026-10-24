@@ -4,12 +4,12 @@
 
 {% block content %}
   <section class="panel">
-    <h1>Saldo y Proveedores</h1>
+    <h1>Nuevo saldo de proveedor</h1>
 
     <form method="post" class="provider-form">
       <div class="form-grid">
         <div>
-          <label for="name">Nombre</label>
+          <label for="name">Nombre del proveedor</label>
           <input type="text" id="name" name="name" placeholder="Ej. Proveedor S.A." required />
         </div>
 
@@ -58,7 +58,10 @@
                     </form>
                     <div class="provider-action-buttons">
                       <button type="submit" form="provider-payment-{{ provider['id'] }}">Registrar pago</button>
-                      <form class="provider-delete-form" method="post" action="{{ url_for('delete_provider', provider_id=provider['id']) }}" onsubmit="return confirm('¿Deseas eliminar este proveedor y todo su historial?');">
+                      <form class="provider-delete-form" method="post" action="{{ url_for('delete_provider', provider_id=provider['id']) }}"
+                        data-confirm-title="Eliminar proveedor"
+                        data-confirm-message="Se eliminará el proveedor junto con su historial de movimientos, pagos y facturas. Esta acción no se puede deshacer."
+                        data-confirm-action="Eliminar proveedor">
                         <button type="submit" class="btn-delete">Eliminar</button>
                       </form>
                       <a class="btn-secondary" href="{{ url_for('provider_invoices', provider_id=provider['id']) }}">📁 Facturas</a>

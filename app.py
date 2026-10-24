@@ -213,7 +213,7 @@ def login_required(view_func):
     @wraps(view_func)
     def wrapper(*args, **kwargs):
         if "user_id" not in session:
-            flash("Debes iniciar sesión para continuar.")
+            flash("Debes iniciar sesión para continuar.", "error")
             return redirect(url_for("login"))
         return view_func(*args, **kwargs)
 
@@ -305,7 +305,7 @@ def register():
         password = request.form["password"]
 
         if not username or not email or not password:
-            flash("Completa todos los campos.")
+            flash("Completa todos los campos.", "error")
             return render_template("register.html")
 
         conn = get_db_connection()
@@ -316,7 +316,7 @@ def register():
 
         if existing_user:
             conn.close()
-            flash("El usuario o correo ya existen.")
+            flash("El usuario o correo ya existen.", "error")
             return render_template("register.html")
 
         password_hash = generate_password_hash(password)
@@ -330,7 +330,7 @@ def register():
 
         session["user_id"] = user_id
         session["username"] = username
-        flash("Cuenta creada con éxito.")
+        flash("Cuenta creada con éxito.", "success")
         return redirect(url_for("dashboard"))
 
     return render_template("register.html")
@@ -352,10 +352,10 @@ def login():
         if user and check_password_hash(user["password_hash"], password):
             session["user_id"] = user["id"]
             session["username"] = user["username"]
-            flash("Sesión iniciada correctamente.")
+            flash("Sesión iniciada correctamente.", "success")
             return redirect(url_for("dashboard"))
 
-        flash("Credenciales incorrectas.")
+        flash("Credenciales incorrectas.", "error")
         return render_template("login.html")
 
     return render_template("login.html")
@@ -364,7 +364,7 @@ def login():
 @app.route("/logout")
 def logout():
     session.clear()
-    flash("Has cerrado sesión.")
+    flash("Has cerrado sesión.", "info")
     return redirect(url_for("login"))
 
 
@@ -372,9 +372,52 @@ def logout():
 @login_required
 def dashboard():
     user_id = session["user_id"]
+    current_month = datetime.now().strftime("%Y-%m")
+    conn = get_db_connection()
+    income_totals = conn.execute(
+        """
+        SELECT
+            COALESCE(SUM(amount_bruto), 0.0) AS total_bruto,
+            COALESCE(SUM(amount_neto), 0.0) AS total_neto
+        FROM incomes
+        WHERE user_id = ? AND substr(income_date, 1, 7) = ?
+        """,
+        (user_id, current_month),
+    ).fetchone()
+    provider_totals = conn.execute(
+        """
+        SELECT
+            COALESCE(SUM(p.balance), 0.0) AS total_balance,
+            COALESCE(SUM((
+                SELECT pp.amount_paid
+                FROM provider_payments pp
+                WHERE pp.provider_id = p.id
+                ORDER BY pp.payment_date DESC, pp.id DESC
+                LIMIT 1
+            )), 0.0) AS total_last_payments
+        FROM providers p
+        WHERE p.user_id = ?
+        """,
+        (user_id,),
+    ).fetchone()
+
+    conn.close()
+
+    return render_template(
+        "dashboard.html",
+        total_bruto=round(float(income_totals["total_bruto"]), 2),
+        total_neto=round(float(income_totals["total_neto"]), 2),
+        total_balance_proveedores=round(float(provider_totals["total_balance"]), 2),
+        total_ultimo_pago_proveedores=round(float(provider_totals["total_last_payments"]), 2),
+        username=session["username"],
+    )
+
+
+@app.route("/ingresos/nuevo", methods=["GET", "POST"])
+@login_required
+def add_income():
     filter_type = request.args.get("filter_type")
     filter_value = request.args.get("filter_value")
-
     selected_day = request.args.get("day")
     selected_month = request.args.get("month")
 
@@ -392,90 +435,41 @@ def dashboard():
     else:
         filter_type = "month"
 
-    conn = get_db_connection()
-    query, params = get_income_filters(user_id, selected_day, selected_month)
-    incomes = conn.execute(query, params).fetchall()
+    def render_income_page():
+        conn = get_db_connection()
+        query, params = get_income_filters(session["user_id"], selected_day, selected_month)
+        incomes = conn.execute(query, params).fetchall()
+        conn.close()
+        return render_template(
+            "add_income.html",
+            incomes=incomes,
+            filter_type=filter_type,
+            selected_day=selected_day,
+            selected_month=selected_month,
+            today=datetime.now().strftime("%Y-%m-%d"),
+        )
 
-    months = conn.execute(
-        "SELECT DISTINCT substr(income_date, 1, 7) AS month FROM incomes WHERE user_id = ? ORDER BY month DESC",
-        (user_id,),
-    ).fetchall()
-    days = conn.execute(
-        "SELECT DISTINCT income_date AS date FROM incomes WHERE user_id = ? ORDER BY income_date DESC",
-        (user_id,),
-    ).fetchall()
-
-    providers = conn.execute(
-        """
-        SELECT
-            p.id,
-            p.name,
-            p.balance,
-            COALESCE((
-                SELECT pp.amount_paid
-                FROM provider_payments pp
-                WHERE pp.provider_id = p.id
-                ORDER BY pp.payment_date DESC, pp.id DESC
-                LIMIT 1
-            ), 0.0) AS last_payment_amount,
-            p.created_at,
-            p.last_balance_date
-        FROM providers p
-        WHERE p.user_id = ?
-        ORDER BY p.created_at DESC
-        """,
-        (user_id,),
-    ).fetchall()
-
-    total_bruto = sum(float(row["amount_bruto"]) for row in incomes)
-    total_neto = sum(float(row["amount_neto"]) for row in incomes)
-    total_impuestos = sum(float(row["tax_amount"]) for row in incomes)
-    total_balance_proveedores = sum(float(row["balance"]) for row in providers)
-    total_ultimo_pago_proveedores = sum(float(row["last_payment_amount"]) for row in providers)
-
-    conn.close()
-
-    return render_template(
-        "dashboard.html",
-        incomes=incomes,
-        providers=providers,
-        months=months,
-        days=days,
-        selected_day=selected_day,
-        selected_month=selected_month,
-        filter_type=filter_type,
-        total_bruto=round(total_bruto, 2),
-        total_neto=round(total_neto, 2),
-        total_impuestos=round(total_impuestos, 2),
-        total_balance_proveedores=round(total_balance_proveedores, 2),
-        total_ultimo_pago_proveedores=round(total_ultimo_pago_proveedores, 2),
-        username=session["username"],
-    )
-
-
-@app.route("/ingresos/nuevo", methods=["GET", "POST"])
-@login_required
-def add_income():
     if request.method == "POST":
         try:
             amount_bruto = float(request.form["amount_bruto"])
             tax_rate = float(request.form.get("tax_rate", 0) or 0)
         except (ValueError, TypeError):
-            flash("Los valores numéricos ingresados no son válidos.")
-            return render_template("add_income.html", today=datetime.now().strftime("%Y-%m-%d"))
+            flash("Los valores numéricos ingresados no son válidos.", "error")
+            return render_income_page()
 
         if amount_bruto <= 0:
-            flash("El ingreso bruto debe ser mayor a 0.")
-            return render_template("add_income.html", today=datetime.now().strftime("%Y-%m-%d"))
+            flash("El ingreso bruto debe ser mayor a 0.", "error")
+            return render_income_page()
 
-        if tax_rate < 0 or tax_rate > 100:
-            flash("El porcentaje de impuesto debe estar entre 0 y 100.")
-            return render_template("add_income.html", today=datetime.now().strftime("%Y-%m-%d"))
+        if tax_rate < 0:
+            flash("El margen de ganancia no puede ser negativo.", "error")
+            return render_income_page()
 
         income_date = request.form.get("income_date") or datetime.now().strftime("%Y-%m-%d")
 
-        tax_amount = amount_bruto * (tax_rate / 100)
-        amount_neto = amount_bruto - tax_amount
+        costo_base = amount_bruto / (1 + tax_rate / 100)
+        amount_neto = amount_bruto - costo_base
+        tax_amount = costo_base
 
         conn = get_db_connection()
         conn.execute(
@@ -495,10 +489,10 @@ def add_income():
         conn.commit()
         conn.close()
 
-        flash("Ingreso registrado correctamente.")
-        return redirect(url_for("dashboard"))
+        flash("Ingreso registrado correctamente.", "success")
+        return redirect(url_for("add_income"))
 
-    return render_template("add_income.html", today=datetime.now().strftime("%Y-%m-%d"))
+    return render_income_page()
 
 
 @app.route("/proveedores", methods=["GET", "POST"])
@@ -509,15 +503,15 @@ def providers_page():
         try:
             balance = float(request.form.get("balance", 0) or 0)
         except (ValueError, TypeError):
-            flash("El saldo debe ser un número válido.")
+            flash("El saldo debe ser un número válido.", "error")
             return redirect(url_for("providers_page"))
 
         if not name:
-            flash("El nombre del proveedor es obligatorio.")
+            flash("El nombre del proveedor es obligatorio.", "error")
             return redirect(url_for("providers_page"))
 
         if balance <= 0:
-            flash("El saldo a ingresar debe ser mayor a 0.")
+            flash("El saldo a ingresar debe ser mayor a 0.", "error")
             return redirect(url_for("providers_page"))
 
         balance_date = request.form.get("balance_date") or datetime.now().strftime("%Y-%m-%d")
@@ -538,7 +532,7 @@ def providers_page():
                 "INSERT INTO provider_movements (provider_id, movement_type, amount, movement_date) VALUES (?, ?, ?, ?)",
                 (existing_provider["id"], "balance", balance, balance_date),
             )
-            flash("Saldo agregado al proveedor correctamente.")
+            flash("Saldo agregado al proveedor correctamente.", "success")
         else:
             conn.execute(
                 "INSERT INTO providers (user_id, name, balance, amount_paid, remaining_balance, last_balance_date) VALUES (?, ?, ?, ?, ?, ?)",
@@ -549,7 +543,7 @@ def providers_page():
                 "INSERT INTO provider_movements (provider_id, movement_type, amount, movement_date) VALUES (?, ?, ?, ?)",
                 (provider_id, "balance", balance, balance_date),
             )
-            flash("Proveedor registrado correctamente.")
+            flash("Proveedor registrado correctamente.", "success")
 
         conn.commit()
         conn.close()
@@ -622,14 +616,26 @@ def delete_income(income_id):
 
     if not income:
         conn.close()
-        flash("Ingreso no encontrado.")
-        return redirect(url_for("dashboard"))
+        flash("Ingreso no encontrado.", "error")
+        return redirect(
+            url_for(
+                "add_income",
+                filter_type=request.args.get("filter_type"),
+                filter_value=request.args.get("filter_value"),
+            )
+        )
 
     conn.execute("DELETE FROM incomes WHERE id = ? AND user_id = ?", (income_id, session["user_id"]))
     conn.commit()
     conn.close()
-    flash("Ingreso eliminado correctamente.")
-    return redirect(url_for("dashboard"))
+    flash("Ingreso eliminado correctamente.", "success")
+    return redirect(
+        url_for(
+            "add_income",
+            filter_type=request.args.get("filter_type"),
+            filter_value=request.args.get("filter_value"),
+        )
+    )
 
 
 @app.route("/proveedores/<int:provider_id>/pago", methods=["POST"])
@@ -638,13 +644,13 @@ def add_provider_payment(provider_id):
     try:
         amount_paid = float(request.form.get("amount_paid", 0) or 0)
     except (ValueError, TypeError):
-        flash("El monto del pago debe ser un número válido.")
+        flash("El monto del pago debe ser un número válido.", "error")
         return redirect(url_for("providers_page"))
 
     payment_date = request.form.get("payment_date") or datetime.now().strftime("%Y-%m-%d")
 
     if amount_paid <= 0:
-        flash("El monto del pago debe ser mayor a cero.")
+        flash("El monto del pago debe ser mayor a cero.", "error")
         return redirect(url_for("providers_page"))
 
     conn = get_db_connection()
@@ -655,12 +661,12 @@ def add_provider_payment(provider_id):
 
     if not provider:
         conn.close()
-        flash("Proveedor no encontrado.")
+        flash("Proveedor no encontrado.", "error")
         return redirect(url_for("providers_page"))
 
     current_balance = float(provider["balance"])
     if amount_paid > current_balance:
-        flash(f"El monto del pago ($ {amount_paid:.2f}) no puede ser mayor al saldo adeudado ($ {current_balance:.2f}).")
+        flash(f"El monto del pago ($ {amount_paid:.2f}) no puede ser mayor al saldo adeudado ($ {current_balance:.2f}).", "error")
         conn.close()
         return redirect(url_for("providers_page"))
 
@@ -677,7 +683,7 @@ def add_provider_payment(provider_id):
     )
     conn.commit()
     conn.close()
-    flash("Pago registrado correctamente.")
+    flash("Pago registrado correctamente.", "success")
     return redirect(url_for("providers_page"))
 
 
@@ -692,7 +698,7 @@ def delete_provider(provider_id):
 
     if not provider:
         conn.close()
-        flash("Proveedor no encontrado.")
+        flash("Proveedor no encontrado.", "error")
         return redirect(url_for("providers_page"))
 
     # Eliminar archivos físicos de facturas asociadas a este proveedor
@@ -714,7 +720,7 @@ def delete_provider(provider_id):
     conn.execute("DELETE FROM providers WHERE id = ? AND user_id = ?", (provider_id, session["user_id"]))
     conn.commit()
     conn.close()
-    flash("Proveedor eliminado correctamente.")
+    flash("Proveedor eliminado correctamente.", "success")
     return redirect(url_for("providers_page"))
 
 
@@ -780,7 +786,7 @@ def provider_invoices(provider_id):
 
     if not provider:
         conn.close()
-        flash("Proveedor no encontrado.")
+        flash("Proveedor no encontrado.", "error")
         return redirect(url_for("invoices_index"))
 
     if request.method == "POST":
@@ -790,12 +796,12 @@ def provider_invoices(provider_id):
         file = request.files.get("invoice_file")
         if not file or file.filename == "":
             conn.close()
-            flash("Debes seleccionar un archivo de factura (foto o PDF).")
+            flash("Debes seleccionar un archivo de factura (foto o PDF).", "error")
             return redirect(url_for("provider_invoices", provider_id=provider_id))
 
         if not allowed_file(file.filename):
             conn.close()
-            flash("Formato de archivo no permitido. Solo se aceptan PDF, PNG, JPG, JPEG o WEBP.")
+            flash("Formato de archivo no permitido. Solo se aceptan PDF, PNG, JPG, JPEG o WEBP.", "error")
             return redirect(url_for("provider_invoices", provider_id=provider_id))
 
         original_filename = secure_filename(file.filename) or "factura"
@@ -823,7 +829,7 @@ def provider_invoices(provider_id):
         conn.commit()
         conn.close()
 
-        flash("Factura subida correctamente.")
+        flash("Factura subida correctamente.", "success")
         return redirect(url_for("provider_invoices", provider_id=provider_id))
 
     # Filtros para el historial de facturas
@@ -889,7 +895,7 @@ def view_invoice_file(invoice_id):
     conn.close()
 
     if not invoice:
-        flash("Factura no encontrada.")
+        flash("Factura no encontrada.", "error")
         return redirect(url_for("invoices_index"))
 
     return send_from_directory(
@@ -911,7 +917,7 @@ def delete_invoice(invoice_id):
 
     if not invoice:
         conn.close()
-        flash("Factura no encontrada.")
+        flash("Factura no encontrada.", "error")
         return redirect(url_for("invoices_index"))
 
     provider_id = invoice["provider_id"]
@@ -925,9 +931,9 @@ def delete_invoice(invoice_id):
     conn.execute("DELETE FROM provider_invoices WHERE id = ? AND user_id = ?", (invoice_id, user_id))
     conn.commit()
     conn.close()
-    flash("Factura eliminada correctamente.")
+    flash("Factura eliminada correctamente.", "success")
     return redirect(url_for("provider_invoices", provider_id=provider_id))
 
 
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=5000)
+    app.run(debug=True, host="0.0.0.0", port=5000)
