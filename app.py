@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import json
+import mimetypes
 import os
 import sqlite3
 import uuid
 from datetime import datetime
 from functools import wraps
+from io import BytesIO
+from urllib.error import HTTPError
+from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 from flask import (
     Flask,
@@ -12,6 +18,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    send_file,
     send_from_directory,
     session,
     url_for,
@@ -20,26 +27,119 @@ from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "sistema-contable-secret")
+is_production = os.environ.get("APP_ENV") == "production"
+secret_key = os.environ.get("SECRET_KEY")
+if is_production and not secret_key:
+    raise RuntimeError("SECRET_KEY debe configurarse en el entorno de producción.")
+app.config["SECRET_KEY"] = secret_key or "local-development-only"
+app.config["SESSION_COOKIE_SECURE"] = is_production
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.config["UPLOAD_FOLDER"] = os.path.join(os.path.dirname(__file__), "uploads", "invoices")
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB máximo
 ALLOWED_EXTENSIONS = {"pdf", "png", "jpg", "jpeg", "webp"}
 
-os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+DATABASE_URL = os.environ.get("DATABASE_URL")
+DB_PATH = os.environ.get(
+    "SQLITE_PATH", os.path.join(os.path.dirname(__file__), "database.db")
+)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_SECRET_KEY = os.environ.get("SUPABASE_SECRET_KEY")
+SUPABASE_STORAGE_BUCKET = os.environ.get("SUPABASE_STORAGE_BUCKET", "invoices")
+if bool(SUPABASE_URL) != bool(SUPABASE_SECRET_KEY):
+    raise RuntimeError("SUPABASE_URL y SUPABASE_SECRET_KEY deben configurarse juntos.")
+if is_production and not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL debe configurarse en el entorno de producción.")
+if is_production and not SUPABASE_URL:
+    raise RuntimeError(
+        "SUPABASE_URL y SUPABASE_SECRET_KEY deben configurarse en producción."
+    )
+
+if not SUPABASE_URL:
+    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "database.db")
+
+class PostgresConnection:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, query, params=()):
+        return self.connection.execute(query.replace("?", "%s"), params)
+
+    def commit(self):
+        self.connection.commit()
+
+    def close(self):
+        self.connection.close()
 
 
 def get_db_connection():
+    if DATABASE_URL:
+        import psycopg
+        from psycopg.rows import dict_row
+
+        connection = psycopg.connect(
+            DATABASE_URL,
+            connect_timeout=10,
+            prepare_threshold=None,
+            row_factory=dict_row,
+            sslmode="require",
+        )
+        return PostgresConnection(connection)
+
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 30000")
     return conn
+
+
+def supabase_storage_request(method, filename, data=None, content_type=None):
+    storage_path = quote(f"{SUPABASE_STORAGE_BUCKET}/{filename}", safe="/")
+    request_method = method
+    if method == "DELETE":
+        storage_path = quote(SUPABASE_STORAGE_BUCKET, safe="")
+        data = json.dumps({"prefixes": [filename]}).encode("utf-8")
+        content_type = "application/json"
+        request_method = "POST"
+    req = Request(
+        f"{SUPABASE_URL}/storage/v1/object/{storage_path}",
+        data=data,
+        method=request_method,
+        headers={
+            "apikey": SUPABASE_SECRET_KEY,
+            "Authorization": f"Bearer {SUPABASE_SECRET_KEY}",
+            **({"Content-Type": content_type} if content_type else {}),
+        },
+    )
+    try:
+        with urlopen(req, timeout=30) as response:
+            return response.read()
+    except HTTPError as error:
+        raise RuntimeError(
+            f"Supabase Storage respondió con el estado {error.code}."
+        ) from error
+
+
+def save_invoice_file(file, filename):
+    if SUPABASE_URL:
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        supabase_storage_request("POST", filename, file.read(), content_type)
+        return
+
+    file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
+
+
+def delete_invoice_file(filename):
+    if SUPABASE_URL:
+        supabase_storage_request("DELETE", filename)
+        return
+
+    file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    if os.path.exists(file_path):
+        os.remove(file_path)
 
 
 def update_provider_totals(conn, provider_id):
@@ -86,26 +186,11 @@ def migrate_incomes_schema(conn):
     conn.execute("DROP TABLE incomes_old")
 
 
-def cleanup_duplicate_provider_movements(conn):
-    conn.execute(
-        """
-        DELETE FROM provider_movements
-        WHERE movement_type = 'payment'
-        """
-    )
-    conn.execute(
-        """
-        DELETE FROM provider_movements
-        WHERE id NOT IN (
-            SELECT MIN(id)
-            FROM provider_movements
-            GROUP BY provider_id, movement_type, amount, movement_date
-        )
-        """
-    )
-
-
 def init_db():
+    if DATABASE_URL:
+        init_postgres_db()
+        return
+
     conn = get_db_connection()
     conn.execute(
         """
@@ -201,7 +286,90 @@ def init_db():
         )
         """
     )
-    cleanup_duplicate_provider_movements(conn)
+    conn.commit()
+    conn.close()
+
+
+def init_postgres_db():
+    conn = get_db_connection()
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS incomes (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            amount_bruto DOUBLE PRECISION NOT NULL,
+            tax_rate DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+            tax_amount DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+            amount_neto DOUBLE PRECISION NOT NULL,
+            income_date TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS providers (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            name TEXT NOT NULL,
+            balance DOUBLE PRECISION NOT NULL,
+            amount_paid DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+            remaining_balance DOUBLE PRECISION NOT NULL,
+            last_balance_date TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS provider_payments (
+            id SERIAL PRIMARY KEY,
+            provider_id INTEGER NOT NULL REFERENCES providers(id),
+            amount_paid DOUBLE PRECISION NOT NULL,
+            payment_date TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS provider_movements (
+            id SERIAL PRIMARY KEY,
+            provider_id INTEGER NOT NULL REFERENCES providers(id),
+            movement_type TEXT NOT NULL,
+            amount DOUBLE PRECISION NOT NULL,
+            movement_date TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS provider_invoices (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER NOT NULL REFERENCES users(id),
+            provider_id INTEGER NOT NULL REFERENCES providers(id),
+            invoice_number TEXT,
+            amount DOUBLE PRECISION NOT NULL DEFAULT 0.0,
+            invoice_date TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            original_filename TEXT NOT NULL,
+            notes TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -297,6 +465,14 @@ def index():
     return redirect(url_for("login"))
 
 
+@app.route("/health")
+def health():
+    conn = get_db_connection()
+    conn.execute("SELECT 1")
+    conn.close()
+    return {"status": "ok"}
+
+
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
@@ -320,12 +496,12 @@ def register():
             return render_template("register.html")
 
         password_hash = generate_password_hash(password)
-        conn.execute(
-            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
+        user = conn.execute(
+            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?) RETURNING id",
             (username, email, password_hash),
-        )
+        ).fetchone()
         conn.commit()
-        user_id = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()["id"]
+        user_id = user["id"]
         conn.close()
 
         session["user_id"] = user_id
@@ -534,11 +710,11 @@ def providers_page():
             )
             flash("Saldo agregado al proveedor correctamente.", "success")
         else:
-            conn.execute(
-                "INSERT INTO providers (user_id, name, balance, amount_paid, remaining_balance, last_balance_date) VALUES (?, ?, ?, ?, ?, ?)",
+            inserted_provider = conn.execute(
+                "INSERT INTO providers (user_id, name, balance, amount_paid, remaining_balance, last_balance_date) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
                 (session["user_id"], name, balance, 0, balance, balance_date),
-            )
-            provider_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+            ).fetchone()
+            provider_id = inserted_provider["id"]
             conn.execute(
                 "INSERT INTO provider_movements (provider_id, movement_type, amount, movement_date) VALUES (?, ?, ?, ?)",
                 (provider_id, "balance", balance, balance_date),
@@ -701,18 +877,12 @@ def delete_provider(provider_id):
         flash("Proveedor no encontrado.", "error")
         return redirect(url_for("providers_page"))
 
-    # Eliminar archivos físicos de facturas asociadas a este proveedor
     invoices = conn.execute(
         "SELECT filename FROM provider_invoices WHERE provider_id = ? AND user_id = ?",
         (provider_id, session["user_id"]),
     ).fetchall()
     for inv in invoices:
-        file_path = os.path.join(app.config["UPLOAD_FOLDER"], inv["filename"])
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except OSError:
-                pass
+        delete_invoice_file(inv["filename"])
 
     conn.execute("DELETE FROM provider_invoices WHERE provider_id = ? AND user_id = ?", (provider_id, session["user_id"]))
     conn.execute("DELETE FROM provider_payments WHERE provider_id = ?", (provider_id,))
@@ -807,8 +977,7 @@ def provider_invoices(provider_id):
         original_filename = secure_filename(file.filename) or "factura"
         ext = original_filename.rsplit(".", 1)[1].lower() if "." in original_filename else "pdf"
         unique_filename = f"prov_{provider_id}_{uuid.uuid4().hex[:12]}.{ext}"
-        save_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_filename)
-        file.save(save_path)
+        save_invoice_file(file, unique_filename)
 
         conn.execute(
             """
@@ -898,10 +1067,16 @@ def view_invoice_file(invoice_id):
         flash("Factura no encontrada.", "error")
         return redirect(url_for("invoices_index"))
 
+    if SUPABASE_URL:
+        file_content = supabase_storage_request("GET", invoice["filename"])
+        return send_file(
+            BytesIO(file_content),
+            download_name=invoice["original_filename"],
+            as_attachment=False,
+        )
+
     return send_from_directory(
-        app.config["UPLOAD_FOLDER"],
-        invoice["filename"],
-        as_attachment=False,
+        app.config["UPLOAD_FOLDER"], invoice["filename"], as_attachment=False
     )
 
 
@@ -921,12 +1096,7 @@ def delete_invoice(invoice_id):
         return redirect(url_for("invoices_index"))
 
     provider_id = invoice["provider_id"]
-    file_path = os.path.join(app.config["UPLOAD_FOLDER"], invoice["filename"])
-    if os.path.exists(file_path):
-        try:
-            os.remove(file_path)
-        except OSError:
-            pass
+    delete_invoice_file(invoice["filename"])
 
     conn.execute("DELETE FROM provider_invoices WHERE id = ? AND user_id = ?", (invoice_id, user_id))
     conn.commit()

@@ -43,8 +43,8 @@ page = response.get_data(as_text=True)
 
 assert response.status_code == 200
 assert 'Resumen de ingresos' in page
-assert 'Ingresos brutos' in page
-assert 'Ingresos netos' in page
+assert 'Ventas en bruto' in page
+assert 'Ganancia neta' in page
 assert 'Saldo total pendiente' in page
 assert 'Pagos más recientes' in page
 assert 'type="month"' not in page
@@ -57,8 +57,8 @@ income_response = client.get('/ingresos/nuevo')
 income_page = income_response.get_data(as_text=True)
 assert income_response.status_code == 200
 assert 'Historial de ingresos' in income_page
-assert 'Ingreso bruto' in income_page
-assert 'Ingreso neto' in income_page
+assert 'Venta en bruto' in income_page
+assert 'Ganancia neta' in income_page
 assert 'name="filter_type"' in income_page
 assert 'name="filter_value"' in income_page
 assert 'type="month"' in income_page

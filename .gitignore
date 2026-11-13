@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+database.db
+database.db-*
+uploads/invoices/*
+!uploads/invoices/.gitkeep
